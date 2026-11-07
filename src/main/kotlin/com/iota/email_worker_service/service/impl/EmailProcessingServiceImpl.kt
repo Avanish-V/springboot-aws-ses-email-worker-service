@@ -109,7 +109,7 @@ class EmailProcessingServiceImpl(
         }
 
         val personalizedSubject = personalizeText(job.subject, recipientDto)
-        val personalizedHtml = personalizeText(job.htmlContent, recipientDto)
+        val personalizedHtml = formatEmailHtml(personalizeText(job.htmlContent, recipientDto))
 
         val sendDto = SendEmailDto(
             campaignId = campaignId,
@@ -151,6 +151,59 @@ class EmailProcessingServiceImpl(
             campaignRepository.incrementFailedCount(campaignId)
             true
         }
+    }
+
+    private fun formatEmailHtml(content: String): String {
+        if (content.isBlank()) return "<p></p>"
+
+        val hasBlockTags = content.contains("<p", ignoreCase = true) ||
+                content.contains("<div", ignoreCase = true) ||
+                content.contains("<table", ignoreCase = true) ||
+                content.contains("<h1", ignoreCase = true) ||
+                content.contains("<h2", ignoreCase = true) ||
+                content.contains("<h3", ignoreCase = true) ||
+                content.contains("<ul", ignoreCase = true) ||
+                content.contains("<ol", ignoreCase = true) ||
+                content.contains("<html", ignoreCase = true)
+
+        if (hasBlockTags) {
+            return content
+        }
+
+        val paragraphs = content.trim().split(Regex("\n{2,}"))
+        val formattedBody = paragraphs.joinToString("\n") { paragraph ->
+            val lines = paragraph.trim().split("\n")
+            val isBulletList = lines.isNotEmpty() && lines.all { it.trim().startsWith("- ") || it.trim().startsWith("• ") }
+            if (isBulletList) {
+                val items = lines.joinToString("") { l ->
+                    "<li style=\"margin-bottom: 6px;\">${l.trim().removePrefix("- ").removePrefix("• ").trim()}</li>"
+                }
+                "<ul style=\"margin: 0 0 16px 24px; padding: 0; line-height: 1.6; color: #2d3748;\">$items</ul>"
+            } else {
+                var lineWithBr = lines.joinToString("<br/>")
+                lineWithBr = lineWithBr.replace(Regex("""\*\*(.*?)\*\*"""), "<strong>$1</strong>")
+                "<p style=\"margin: 0 0 16px 0; font-size: 15px; line-height: 1.65; color: #2d3748;\">$lineWithBr</p>"
+            }
+        }
+
+        return """
+            <!DOCTYPE html>
+            <html>
+            <head>
+              <meta charset="utf-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            </head>
+            <body style="margin: 0; padding: 24px 12px; background-color: #f7fafc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #2d3748;">
+              <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" style="max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 8px; border: 1px solid #e2e8f0; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+                <tr>
+                  <td style="padding: 32px 32px 24px 32px; font-size: 15px; line-height: 1.65; color: #2d3748;">
+                    $formattedBody
+                  </td>
+                </tr>
+              </table>
+            </body>
+            </html>
+        """.trimIndent()
     }
 
     private fun personalizeText(template: String, recipient: EmailJobRecipient): String {
